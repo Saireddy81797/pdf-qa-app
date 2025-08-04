@@ -1,49 +1,43 @@
 import streamlit as st
 from PyPDF2 import PdfReader
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.chains.question_answering import load_qa_chain
+from langchain.vectorstores import FAISS
+from langchain.embeddings import SentenceTransformerEmbeddings
+from langchain.chains import RetrievalQA
 from langchain.llms import HuggingFacePipeline
 from transformers import pipeline
 
-# Load embedding model
-@st.cache_resource
-def load_embeddings():
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+st.set_page_config(page_title="📄 PDF Chatbot", layout="wide")
+st.title("📄 Ask Questions from PDF (No API)")
 
-# Load QA chain
-@st.cache_resource
-def load_qa():
-    qa_pipeline = pipeline("text2text-generation", model="google/flan-t5-base", tokenizer="google/flan-t5-base", max_length=512)
-    local_llm = HuggingFacePipeline(pipeline=qa_pipeline)
-    return load_qa_chain(llm=local_llm, chain_type="stuff")
+# Step 1: Upload PDF
+pdf = st.file_uploader("Upload your PDF", type="pdf")
 
-# Streamlit app UI
-st.title("📄 Offline PDF Question Answering App (No API Required)")
-
-uploaded_file = st.file_uploader("📤 Upload your PDF file", type="pdf")
-
-if uploaded_file:
-    reader = PdfReader(uploaded_file)
+if pdf:
+    # Step 2: Extract text from PDF
+    reader = PdfReader(pdf)
     raw_text = ""
     for page in reader.pages:
         content = page.extract_text()
         if content:
             raw_text += content
 
-    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    texts = text_splitter.split_text(raw_text)
+    # Step 3: Split text
+    splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    chunks = splitter.split_text(raw_text)
 
-    embeddings = load_embeddings()
-    docsearch = FAISS.from_texts(texts, embeddings)
+    # Step 4: Create embeddings
+    embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+    db = FAISS.from_texts(chunks, embedding=embeddings)
 
-    st.success("✅ PDF uploaded and processed. Ask your question below!")
+    # Step 5: Load HuggingFace QA model
+    pipe = pipeline("text2text-generation", model="google/flan-t5-base", tokenizer="google/flan-t5-base", max_length=512)
+    llm = HuggingFacePipeline(pipeline=pipe)
+    qa = RetrievalQA.from_chain_type(llm=llm, retriever=db.as_retriever())
 
-    query = st.text_input("❓ Enter your question:")
-    if query:
-        docs = docsearch.similarity_search(query, k=3)
-        qa_chain = load_qa()
-        response = qa_chain.run(input_documents=docs, question=query)
-        st.write("### 📌 Answer:")
-        st.write(response)
+    # Step 6: Input box for questions
+    question = st.text_input("Ask a question from the PDF:")
+    if question:
+        result = qa.run(question)
+        st.markdown("### ✅ Answer:")
+        st.write(result)
