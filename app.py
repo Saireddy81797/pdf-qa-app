@@ -1,14 +1,15 @@
 import streamlit as st
 from PyPDF2 import PdfReader
+from langchain_core.documents import Document
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores import FAISS
-from langchain.embeddings import SentenceTransformerEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.llms import HuggingFacePipeline
 from transformers import pipeline
 
 st.set_page_config(page_title="📄 PDF Chatbot", layout="wide")
-st.title("📄 Ask Questions from PDF (No API)")
+st.title("📄 Ask Questions from PDF (Offline, No API)")
 
 # Step 1: Upload PDF
 pdf = st.file_uploader("Upload your PDF", type="pdf")
@@ -18,24 +19,26 @@ if pdf:
     reader = PdfReader(pdf)
     raw_text = ""
     for page in reader.pages:
-        content = page.extract_text()
-        if content:
-            raw_text += content
+        if page.extract_text():
+            raw_text += page.extract_text()
 
     # Step 3: Split text
     splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     chunks = splitter.split_text(raw_text)
 
-    # Step 4: Create embeddings
-    embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
-    db = FAISS.from_texts(chunks, embedding=embeddings)
+    # Step 4: Convert to Documents
+    documents = [Document(page_content=chunk) for chunk in chunks]
 
-    # Step 5: Load HuggingFace QA model
+    # Step 5: Embeddings
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    db = FAISS.from_documents(documents, embedding=embeddings)
+
+    # Step 6: Load lightweight QA model
     pipe = pipeline("text2text-generation", model="google/flan-t5-base", tokenizer="google/flan-t5-base", max_length=512)
     llm = HuggingFacePipeline(pipeline=pipe)
     qa = RetrievalQA.from_chain_type(llm=llm, retriever=db.as_retriever())
 
-    # Step 6: Input box for questions
+    # Step 7: Ask questions
     question = st.text_input("Ask a question from the PDF:")
     if question:
         result = qa.run(question)
