@@ -5,7 +5,7 @@ from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 import numpy as np
 
-st.title("📄 Ask Questions from PDF (Smart Answering)")
+st.title("📄 Smart PDF Q&A (Full Sentence Answers)")
 
 @st.cache_data
 def load_pdf_text(uploaded_file):
@@ -16,17 +16,17 @@ def load_pdf_text(uploaded_file):
     return text
 
 @st.cache_resource
-def get_model():
+def load_models():
     embedder = SentenceTransformer('all-MiniLM-L6-v2')
-    qa_pipeline = pipeline("question-answering", model="distilbert-base-uncased-distilled-squad")
-    return embedder, qa_pipeline
+    summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+    return embedder, summarizer
 
-def get_best_chunk(question, chunks, embedder):
+def get_top_chunks(question, chunks, embedder, top_k=2):
     chunk_embeddings = embedder.encode(chunks)
     question_embedding = embedder.encode([question])
     similarities = cosine_similarity(question_embedding, chunk_embeddings)[0]
-    best_idx = np.argmax(similarities)
-    return chunks[best_idx]
+    top_indices = similarities.argsort()[-top_k:][::-1]
+    return [chunks[i] for i in top_indices]
 
 uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
 
@@ -34,14 +34,17 @@ if uploaded_file:
     text = load_pdf_text(uploaded_file)
     chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
 
-    embedder, qa_pipeline = get_model()
+    embedder, summarizer = load_models()
 
     question = st.text_input("Ask a question from the PDF:")
 
     if question:
         with st.spinner("Thinking..."):
-            best_chunk = get_best_chunk(question, chunks, embedder)
-            result = qa_pipeline(question=question, context=best_chunk)
-            answer = result['answer']
+            top_chunks = get_top_chunks(question, chunks, embedder)
+            combined_context = " ".join(top_chunks)
+
+            prompt = f"Question: {question}\nContext: {combined_context}\nAnswer:"
+            summary = summarizer(prompt, max_length=150, min_length=60, do_sample=False)[0]['summary_text']
+        
         st.markdown("**Answer:**")
-        st.write(answer)
+        st.write(summary)
