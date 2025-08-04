@@ -1,31 +1,41 @@
 import streamlit as st
-from PyPDF2 import PdfReader
-from transformers import pipeline
+import PyPDF2
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+import numpy as np
 
-# Load QA model
-@st.cache_resource
-def load_qa_pipeline():
-    return pipeline("question-answering", model="distilbert-base-uncased-distilled-squad")
+st.title("📄 Ask Questions from PDF (Fast, Offline)")
 
-# Streamlit UI
-st.set_page_config(page_title="📄 PDF Q&A")
-st.title("📄 Ask Questions from PDF (No API Key)")
-
-uploaded_file = st.file_uploader("Upload PDF", type="pdf")
-
-if uploaded_file:
-    reader = PdfReader(uploaded_file)
+@st.cache_data
+def load_pdf_text(uploaded_file):
+    reader = PyPDF2.PdfReader(uploaded_file)
     text = ""
     for page in reader.pages:
-        if page.extract_text():
-            text += page.extract_text()
+        text += page.extract_text()
+    return text
 
-    st.success("✅ PDF Loaded")
+@st.cache_resource
+def get_embeddings_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
 
-    qa_pipeline = load_qa_pipeline()
+def get_answer(question, chunks, model):
+    chunk_embeddings = model.encode(chunks)
+    question_embedding = model.encode([question])
+    similarities = cosine_similarity(question_embedding, chunk_embeddings)[0]
+    best_idx = np.argmax(similarities)
+    return chunks[best_idx][:1000]  # return top relevant chunk (max 1000 chars)
 
-    query = st.text_input("Ask a question from the PDF:")
-    if query:
-        with st.spinner("Searching..."):
-            result = qa_pipeline(question=query, context=text)
-            st.write("**Answer:**", result['answer'])
+uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
+
+if uploaded_file:
+    text = load_pdf_text(uploaded_file)
+    chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
+
+    model = get_embeddings_model()
+    question = st.text_input("Ask a question from the PDF:")
+    
+    if question:
+        with st.spinner("Searching for answer..."):
+            answer = get_answer(question, chunks, model)
+        st.markdown("**Answer:**")
+        st.write(answer)
