@@ -1,50 +1,44 @@
 import streamlit as st
-import PyPDF2
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
+from PyPDF2 import PdfReader
+from langchain.embeddings import SentenceTransformerEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.chains.question_answering import load_qa_chain
+from langchain.llms import HuggingFacePipeline
 from transformers import pipeline
-import numpy as np
 
-st.title("📄 Smart PDF Q&A (Full Sentence Answers)")
+# Title
+st.set_page_config(page_title=" Ask Questions from PDF", layout="centered")
+st.title(" Ask Questions from PDF (Offline, No API)")
 
-@st.cache_data
-def load_pdf_text(uploaded_file):
-    reader = PyPDF2.PdfReader(uploaded_file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text()
-    return text
-
-@st.cache_resource
-def load_models():
-    embedder = SentenceTransformer('all-MiniLM-L6-v2')
-    summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
-    return embedder, summarizer
-
-def get_top_chunks(question, chunks, embedder, top_k=2):
-    chunk_embeddings = embedder.encode(chunks)
-    question_embedding = embedder.encode([question])
-    similarities = cosine_similarity(question_embedding, chunk_embeddings)[0]
-    top_indices = similarities.argsort()[-top_k:][::-1]
-    return [chunks[i] for i in top_indices]
-
+# Upload PDF
 uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
 
 if uploaded_file:
-    text = load_pdf_text(uploaded_file)
-    chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
+    reader = PdfReader(uploaded_file)
+    raw_text = ""
+    for page in reader.pages:
+        if page.extract_text():
+            raw_text += page.extract_text()
 
-    embedder, summarizer = load_models()
+    # Split text into chunks
+    splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    texts = splitter.split_text(raw_text)
 
-    question = st.text_input("Ask a question from the PDF:")
+    # Load embeddings
+    embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+    vectorstore = FAISS.from_texts(texts, embedding=embeddings)
 
-    if question:
-        with st.spinner("Thinking..."):
-            top_chunks = get_top_chunks(question, chunks, embedder)
-            combined_context = " ".join(top_chunks)
+    # Load QA chain with longer, detailed output
+    pipe = pipeline("text2text-generation", model="google/flan-t5-large", tokenizer="google/flan-t5-large", max_length=256)
+    llm = HuggingFacePipeline(pipeline=pipe)
+    chain = load_qa_chain(llm=llm, chain_type="stuff")
 
-            prompt = f"Question: {question}\nContext: {combined_context}\nAnswer:"
-            summary = summarizer(prompt, max_length=150, min_length=60, do_sample=False)[0]['summary_text']
-        
+    st.success(" PDF loaded successfully. Ask your question!")
+
+    query = st.text_input("Ask a question from the PDF:")
+    if query:
+        docs = vectorstore.similarity_search(query, k=3)
+        response = chain.run(input_documents=docs, question=query)
         st.markdown("**Answer:**")
-        st.write(summary)
+        st.write(response)
