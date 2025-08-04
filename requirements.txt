@@ -1,5 +1,5 @@
 streamlit
 PyPDF2
 langchain==0.1.14
-langchain-community==0.0.21
+langchain-community>=0.0.30,<0.1
 openai
