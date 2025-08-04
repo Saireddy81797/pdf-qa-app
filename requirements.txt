@@ -1,6 +1,6 @@
 streamlit
 PyPDF2
 faiss-cpu
-transformers
-sentence-transformers
 langchain==0.0.310
+sentence-transformers
+transformers
