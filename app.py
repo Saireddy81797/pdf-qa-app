@@ -1,53 +1,31 @@
 import streamlit as st
 from PyPDF2 import PdfReader
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.chains.question_answering import load_qa_chain
-from langchain.llms import HuggingFacePipeline
 from transformers import pipeline
 
-# Load embedding model
+# Load QA model
 @st.cache_resource
-def load_embeddings():
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+def load_qa_pipeline():
+    return pipeline("question-answering", model="distilbert-base-uncased-distilled-squad")
 
-# Load question-answering chain
-@st.cache_resource
-def load_qa():
-    pipe = pipeline(
-        "text2text-generation",
-        model="google/flan-t5-small",
-        tokenizer="google/flan-t5-small",
-        max_length=256
-    )
-    llm = HuggingFacePipeline(pipeline=pipe)
-    return load_qa_chain(llm=llm, chain_type="stuff")
+# Streamlit UI
+st.set_page_config(page_title="📄 PDF Q&A")
+st.title("📄 Ask Questions from PDF (No API Key)")
 
-# Streamlit app layout
-st.set_page_config(page_title="📄 Ask Questions from PDF", layout="centered")
-st.title("📄 Ask Questions from PDF (Offline, No API)")
-
-uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
+uploaded_file = st.file_uploader("Upload PDF", type="pdf")
 
 if uploaded_file:
     reader = PdfReader(uploaded_file)
-    text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    text = ""
+    for page in reader.pages:
+        if page.extract_text():
+            text += page.extract_text()
 
-    # Split text into chunks
-    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    texts = text_splitter.split_text(text)
+    st.success("✅ PDF Loaded")
 
-    # Create vector store
-    embeddings = load_embeddings()
-    db = FAISS.from_texts(texts, embeddings)
+    qa_pipeline = load_qa_pipeline()
 
-    # Ask questions
     query = st.text_input("Ask a question from the PDF:")
     if query:
         with st.spinner("Searching..."):
-            docs = db.similarity_search(query, k=3)
-            chain = load_qa()
-            answer = chain.run(input_documents=docs, question=query)
-            st.success("Answer:")
-            st.write(answer)
+            result = qa_pipeline(question=query, context=text)
+            st.write("**Answer:**", result['answer'])
